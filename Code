@@ -1,0 +1,249 @@
+/* 
+ * Project Title: ESP32 Blynk Payment Announcer (Text-to-Speech + I2C LCD)
+ *
+ * LCD wiring (I2C):
+ *   VCC -> 5V (or 3.3V depending on your module)
+ *   GND -> GND
+ *   SDA -> GPIO 21 (ESP32 default SDA)
+ *   SCL -> GPIO 22 (ESP32 default SCL)
+ *
+ * Library needed: "LiquidCrystal I2C" by Frank de Brabander (install via Library Manager)
+ * If your screen doesn't show text, scan for its I2C address (commonly 0x27 or 0x3F)
+ * using an I2C scanner sketch and update LCD_ADDR below.
+ */
+
+// ---------- Blynk credentials (MUST be defined before includes) ----------
+#define BLYNK_TEMPLATE_ID ""
+#define BLYNK_TEMPLATE_NAME ""
+#define BLYNK_AUTH_TOKEN    ""
+
+#include <WiFi.h>
+#include <BlynkSimpleEsp32.h>
+#include <Talkie.h>
+#include "Vocab_US_Large.h"
+#include "Vocab_US_TI99.h"
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+Talkie voice;
+
+// ---------- LCD setup ----------
+#define LCD_ADDR 0x27   // change to 0x3F if your module uses that address
+#define LCD_COLS 16
+#define LCD_ROWS 2
+LiquidCrystal_I2C lcd(LCD_ADDR, LCD_COLS, LCD_ROWS);
+
+// ---------- WiFi credentials ----------
+const char* ssid     = "";
+const char* password = "";
+
+struct WordMap {
+  const char* text;
+  const unsigned char* lpc;
+};
+
+// Vocabulary mapping table
+WordMap words[] = {
+    {"0", sp2_ZERO},
+    {"1", sp2_ONE},
+    {"2", sp2_TWO},
+    {"3", sp2_THREE},
+    {"4", sp2_FOUR},
+    {"5", sp2_FIVE},
+    {"6", sp2_SIX},
+    {"7", sp2_SEVEN},
+    {"8", sp2_EIGHT},
+    {"9", sp2_NINE},
+    {"10", sp2_TEN},
+    {"11", sp2_ELEVEN},
+    {"12", sp2_TWELVE},
+    {"20", sp2_TWENTY},
+    {"30", sp2_THIR_},
+    {"50", sp2_FIF_},
+    {"100", sp2_HUNDRED},
+    {"1000", sp2_THOUSAND},
+    {"TEEN", sp2__TEEN},
+    {"GOT", spt_GOT},
+    {"YOU", spt_YOU},
+
+    // Letters
+    {"A", sp2_A}, {"B", sp2_B}, {"C", sp2_C}, {"D", sp2_D},
+    {"E", sp2_E}, {"F", sp2_F}, {"G", sp2_G}, {"H", sp2_H},
+    {"I", sp2_I}, {"J", sp2_J}, {"K", sp2_K}, {"L", sp2_L},
+    {"M", sp2_M}, {"N", sp2_N}, {"O", sp2_O}, {"P", sp2_P},
+    {"Q", sp2_Q}, {"R", sp2_R}, {"S", sp2_S}, {"T", sp2_T},
+    {"U", sp2_U}, {"V", sp2_V}, {"W", sp2_W}, {"X", sp2_X},
+    {"Y", sp2_Y}, {"Z", sp2_Z},
+
+    // Common words
+    {"THE", sp2_THE},
+    {"DANGER", sp2_DANGER},
+    {"MINUS", sp2_MINUS},
+    {"NOT", sp2_NOT},
+    {"START", sp2_START},
+    {"OFF", sp2_OFF},
+    {"TIME", sp2_TIME},
+    {"READY", sp2_READY},
+    {"SET", sp2_SET},
+    {"STOP", sp2_STOP},
+    {"ON", sp2_ON},
+    {"RED", sp2_RED},
+    {"GREEN", sp2_GREEN},
+    {"PLUS", sp2_PLUS},
+    {"TEST", sp2_TEST},
+    {"VOLTS", sp2_VOLTS},
+    {"AND", sp2_AND},
+    {"IS", sp2_IS},
+    {"ALERT", sp2_ALERT},
+    {"CHECK", sp2_CHECK},
+    {"NUMBER", sp2_NUMBER},
+    {"POINT", sp2_POINT}
+};
+
+const int wordCount = sizeof(words) / sizeof(words[0]);
+
+// ---------- LCD helper functions ----------
+void lcdShowIdle() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("waiting for");
+  lcd.setCursor(0, 1);
+  lcd.print("payment.....");
+}
+
+void lcdShowAmount(int amount) {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Received :");
+  lcd.setCursor(0, 1);
+  lcd.print("Rs");
+  lcd.setCursor(4, 1);
+  lcd.print(amount);
+}
+
+// Function to look up and speak a single word
+void speakWord(const char* w) {
+  for (int i = 0; i < wordCount; i++) {
+    if (strcasecmp(w, words[i].text) == 0) {
+      voice.say(words[i].lpc);
+      return;
+    }
+  }
+  Serial.print("Word not found in vocab: ");
+  Serial.println(w);
+}
+
+// Function to announce single numbers/digits
+void speakNumber(int num) {
+  switch(num) {
+    case 0: speakWord("0"); break;
+    case 1: speakWord("1"); break;
+    case 2: speakWord("2"); break;
+    case 3: speakWord("3"); break;
+    case 4: speakWord("4"); break;
+    case 5: speakWord("5"); break;
+    case 6: speakWord("6"); break;
+    case 7: speakWord("7"); break;
+    case 8: speakWord("8"); break;
+    case 9: speakWord("9"); break;
+  }
+}
+
+// Handler executed whenever new data arrives on Virtual Pin V0
+BLYNK_WRITE(V0) {
+  String data = param.asStr();
+  data.trim();
+
+  if (data.length() == 0) return;
+
+  // Split incoming string into words
+  String parsedWords[50];
+  int parsedCount = 0;
+  int start = 0;
+  int spaceIndex = data.indexOf(' ');
+
+  while (spaceIndex != -1 && parsedCount < 50) {
+    parsedWords[parsedCount++] = data.substring(start, spaceIndex);
+    start = spaceIndex + 1;
+    spaceIndex = data.indexOf(' ', start);
+  }
+  if (start < data.length() && parsedCount < 50) {
+    parsedWords[parsedCount++] = data.substring(start);
+  }
+
+  // Extract payment value (expects value at array index 2 or index 0 fallback)
+  String valueStr = (parsedCount >= 3) ? parsedWords[2] : parsedWords[0];
+  valueStr.replace(",", "");
+  int fullValue = valueStr.toInt();
+
+  // Breakdown digits
+  int thousandsPart = fullValue / 1000;
+  int restPart      = fullValue % 1000;
+
+  int thTens = (thousandsPart / 10) % 10;
+  int thOnes = thousandsPart % 10;
+
+  int hHund = restPart / 100;
+  int hTens = (restPart / 10) % 10;
+  int hOnes = restPart % 10;
+
+  // Serial debug logging
+  Serial.print("Incoming Payment: ");
+  Serial.println(fullValue);
+
+  // LCD: show the amount received
+  lcdShowAmount(fullValue);
+
+  // Audio Speech sequence
+  speakWord("YOU");
+  speakWord("GOT");
+
+  if (thousandsPart > 0) {
+    if (thTens > 0) speakNumber(thTens);
+    if (thOnes > -1) speakNumber(thOnes);
+    speakWord("1000");
+  }
+
+  if (restPart > 0) {
+    if (hHund > 0) {
+      speakNumber(hHund);
+      speakWord("100");
+    }
+    if (hTens > -1) speakNumber(hTens);
+    if (hOnes > -1) speakNumber(hOnes);
+  }
+
+  // Clear virtual pin after processing
+  Blynk.virtualWrite(V0, "");
+
+  // Hold the amount on screen briefly, then go back to the idle message
+  delay(4000);
+  lcdShowIdle();
+}
+
+BLYNK_CONNECTED() {
+  Serial.println("Connected to Blynk Cloud!");
+  Blynk.syncVirtual(V0);
+
+  // Only now switch away from the "ESP32 Pay bot" splash screen
+  lcdShowIdle();
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  Serial.println("Starting ESP32 Blynk Payment Announcer...");
+
+  // LCD init - splash stays on screen until BLYNK_CONNECTED() fires
+  lcd.init();
+  lcd.backlight();
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("ESP32 Pay bot");
+
+  Blynk.begin(BLYNK_AUTH_TOKEN, ssid, password);
+}
+
+void loop() {
+  Blynk.run();
+}
