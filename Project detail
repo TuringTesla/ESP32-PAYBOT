@@ -1,0 +1,37 @@
+ESP32 PayBot is a simple and low-cost approach to creating a payment voice alert system. 
+Instead of directly integrating the ESP32 with a payment service or requiring a dedicated
+merchant account, the system uses the payment notification already generated on a smartphone. 
+
+This makes the setup easier for small shops, students, and DIY projects while still providing an instant 
+voice announcement of the received amount.
+When a payment is received, the payment app sends a notification to the phone. MacroDroid
+detects this notification and forwards its contents to the Blynk server using MQTT. 
+
+The ESP32 receives the notification data from Blynk, identifies the payment amount, and 
+converts it into a voice announcement. The voice signal is sent through the PAM8403 amplifier to the speaker, 
+allowing the PayBot to announce the received amount automatically.
+
+🔄 Simple Working Flow
+
+Payment Received
+       ↓
+Payment App Notification
+       ↓
+     MacroDroid
+       ↓
+   MQTT / Blynk
+       ↓
+      ESP32
+       ↓
+Payment Amount Detected
+       ↓
+   PAM8403 Amplifier
+       ↓
+     Speaker 🔊
+       ↓
+"Payment Received ₹250"
+
+
+⭐ Main Idea
+Existing payment voice-alert systems → Dedicated payment/merchant integration
+ESP32 PayBot → Uses existing phone notification → MacroDroid → MQTT → ESP32
